@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0.14 0.008 260;
+    --foreground: 0.96 0.006 90;
+
+    --card: 0.17 0.01 260;
+    --card-foreground: 0.96 0.006 90;
+
+    --popover: 0.17 0.01 260;
+    --popover-foreground: 0.96 0.006 90;
+
+    --primary: 0.76 0.12 78;
+    --primary-foreground: 0.12 0.01 260;
+
+    --secondary: 0.22 0.015 260;
+    --secondary-foreground: 0.82 0.008 90;
+
+    --muted: 0.20 0.01 260;
+    --muted-foreground: 0.55 0.01 90;
+
+    --accent: 0.22 0.015 260;
+    --accent-foreground: 0.76 0.12 78;
+
+    --destructive: 0.58 0.21 25;
+    --destructive-foreground: 0.97 0.003 90;
+
+    --border: 0.26 0.015 260;
+    --input: 0.22 0.015 260;
+    --ring: 0.76 0.12 78;
+
+    --radius: 0.75rem;
+
+    --chart-1: 0.76 0.12 78;
+    --chart-2: 0.62 0.10 180;
+    --chart-3: 0.68 0.13 140;
+    --chart-4: 0.65 0.15 30;
+    --chart-5: 0.70 0.12 280;
+
+    --sidebar: 0.12 0.008 260;
+    --sidebar-foreground: 0.82 0.008 90;
+    --sidebar-primary: 0.76 0.12 78;
+    --sidebar-primary-foreground: 0.12 0.01 260;
+    --sidebar-accent: 0.18 0.012 260;
+    --sidebar-accent-foreground: 0.76 0.12 78;
+    --sidebar-border: 0.22 0.012 260;
+    --sidebar-ring: 0.76 0.12 78;
+
+    --gold: 0.76 0.12 78;
+    --gold-dim: 0.60 0.09 78;
+    --gold-glow: 0.76 0.14 78;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, oklch(0.22 0.03 78 / 0.15), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 80%, oklch(0.18 0.02 220 / 0.10), transparent);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display;
+  }
+}
+
+/* Gold shimmer animation */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.76 0.12 78 / 0.3); }
+  50% { box-shadow: 0 0 0 8px oklch(0.76 0.12 78 / 0); }
+}
+
+.gold-shimmer {
+  background: linear-gradient(90deg,
+    oklch(0.76 0.12 78) 0%,
+    oklch(0.88 0.10 88) 30%,
+    oklch(0.72 0.14 68) 60%,
+    oklch(0.76 0.12 78) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 4s linear infinite;
+}
+
+.card-glow {
+  box-shadow:
+    0 0 0 1px oklch(0.76 0.12 78 / 0.15),
+    0 4px 24px oklch(0 0 0 / 0.5),
+    inset 0 1px 0 oklch(0.76 0.12 78 / 0.1);
+}
+
+.card-glow:hover {
+  box-shadow:
+    0 0 0 1px oklch(0.76 0.12 78 / 0.35),
+    0 8px 32px oklch(0 0 0 / 0.6),
+    0 0 20px oklch(0.76 0.12 78 / 0.08),
+    inset 0 1px 0 oklch(0.76 0.12 78 / 0.2);
+}
+
+.portfolio-card {
+  background: linear-gradient(135deg,
+    oklch(0.18 0.025 78 / 0.8) 0%,
+    oklch(0.15 0.015 260 / 0.9) 50%,
+    oklch(0.17 0.020 78 / 0.7) 100%
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid oklch(0.76 0.12 78 / 0.2);
+  box-shadow:
+    0 0 60px oklch(0.76 0.12 78 / 0.06),
+    0 20px 60px oklch(0 0 0 / 0.5),
+    inset 0 1px 0 oklch(0.76 0.12 78 / 0.15);
+}
+
+.noise-bg {
+  position: relative;
+}
+
+.noise-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
