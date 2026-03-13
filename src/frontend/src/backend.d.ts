@@ -25,9 +25,12 @@ export interface Transaction {
     amount: number;
 }
 export enum Asset {
+    BNB = "BNB",
     BTC = "BTC",
     ETH = "ETH",
     ICP = "ICP",
+    SOL = "SOL",
+    TSLA = "TSLA",
     USDT = "USDT"
 }
 export enum Direction {

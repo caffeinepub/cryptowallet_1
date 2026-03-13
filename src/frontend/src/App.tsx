@@ -19,21 +19,38 @@ import { Toaster } from "@/components/ui/sonner";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Check,
+  Copy,
   Download,
+  Home,
   Loader2,
   LogOut,
   Plus,
   RefreshCw,
   Send,
+  TrendingDown,
   TrendingUp,
   Wallet,
+  Zap,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 import { Asset, Direction } from "./backend.d";
+import NavBar, { type AppPage } from "./components/NavBar";
+import type { Package, TeslaProject } from "./data/investments";
 import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
+import { useInvestments } from "./hooks/useInvestments";
 import {
   useAddMockBalance,
   useBalances,
@@ -43,34 +60,55 @@ import {
   useSendAsset,
   useTransactionHistory,
 } from "./hooks/useQueries";
+import AboutTSLACoin from "./pages/AboutTSLACoin";
+import ActiveInvestmentsPage from "./pages/ActiveInvestmentsPage";
+import HomePage from "./pages/HomePage";
+import InvestmentConfirmPage from "./pages/InvestmentConfirmPage";
+import InvestmentDetailPage from "./pages/InvestmentDetailPage";
+import InvestmentsPage from "./pages/InvestmentsPage";
 
 // ------- constants -------
+const ETH_BASE_PRICE = 3200;
+const TSLA_PEG_AT_ETH_1500 = 25;
+
 const USD_PRICES: Record<Asset, number> = {
   [Asset.BTC]: 65000,
-  [Asset.ETH]: 3200,
+  [Asset.ETH]: ETH_BASE_PRICE,
+  [Asset.BNB]: 600,
+  [Asset.SOL]: 180,
   [Asset.ICP]: 12,
   [Asset.USDT]: 1,
+  [Asset.TSLA]: TSLA_PEG_AT_ETH_1500 * (ETH_BASE_PRICE / 1500),
 };
 
 const ASSET_DECIMALS: Record<Asset, number> = {
   [Asset.BTC]: 8,
   [Asset.ETH]: 6,
+  [Asset.BNB]: 4,
+  [Asset.SOL]: 4,
   [Asset.ICP]: 4,
   [Asset.USDT]: 2,
+  [Asset.TSLA]: 2,
 };
 
 const ASSET_COLORS: Record<Asset, string> = {
   [Asset.BTC]: "#F7931A",
   [Asset.ETH]: "#627EEA",
+  [Asset.BNB]: "#F3BA2F",
+  [Asset.SOL]: "#9945FF",
   [Asset.ICP]: "#29ABE2",
   [Asset.USDT]: "#26A17B",
+  [Asset.TSLA]: "#E31937",
 };
 
 const ASSET_ICONS: Record<Asset, string> = {
   [Asset.BTC]: "₿",
   [Asset.ETH]: "Ξ",
+  [Asset.BNB]: "B",
+  [Asset.SOL]: "◎",
   [Asset.ICP]: "∞",
   [Asset.USDT]: "$",
+  [Asset.TSLA]: "T",
 };
 
 function formatAmount(amount: number, asset: Asset): string {
@@ -96,112 +134,376 @@ function formatDate(timestamp: bigint): string {
   }).format(new Date(ms));
 }
 
-// ------- Login Screen -------
-function LoginScreen() {
-  const { login, isLoggingIn } = useInternetIdentity();
+// ------- Live ETH Price Hook -------
+function useLiveEthPrice() {
+  const [ethPrice, setEthPrice] = useState<number>(ETH_BASE_PRICE);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const isFresh = lastUpdated
+    ? Date.now() - lastUpdated.getTime() < 60_000
+    : false;
+
+  const fetchPrice = useCallback(async () => {
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      );
+      if (!res.ok) throw new Error("fetch failed");
+      const json = await res.json();
+      const price = json?.ethereum?.usd;
+      if (typeof price === "number" && price > 0) {
+        setEthPrice(price);
+        setLastUpdated(new Date());
+      }
+    } catch {
+      // fall back to ETH_BASE_PRICE silently
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPrice();
+    const id = setInterval(fetchPrice, 30_000);
+    return () => clearInterval(id);
+  }, [fetchPrice]);
+
+  return { ethPrice, loading, lastUpdated, isFresh };
+}
+
+// ------- TSLA Price Chart -------
+function generatePriceData() {
+  const points: { time: string; tsla: number; eth: number }[] = [];
+  let eth = ETH_BASE_PRICE;
+  const now = Date.now();
+  for (let i = 47; i >= 0; i--) {
+    eth += (Math.random() - 0.48) * 80;
+    eth = Math.max(2800, Math.min(3800, eth));
+    const tsla = TSLA_PEG_AT_ETH_1500 * (eth / 1500);
+    const t = new Date(now - i * 3600 * 1000);
+    points.push({
+      time: t.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      tsla: Math.round(tsla * 100) / 100,
+      eth: Math.round(eth),
+    });
+  }
+  return points;
+}
+
+function TSLAPriceChart({
+  onSend,
+  onReceive,
+}: {
+  onSend?: () => void;
+  onReceive?: () => void;
+}) {
+  const { ethPrice, loading: ethLoading, isFresh } = useLiveEthPrice();
+  const tslaPrice = TSLA_PEG_AT_ETH_1500 * (ethPrice / 1500);
+  const historicalData = useMemo(() => generatePriceData(), []);
+  const data = useMemo(() => {
+    const updated = [...historicalData];
+    const now = new Date();
+    updated[updated.length - 1] = {
+      ...updated[updated.length - 1],
+      tsla: Math.round(tslaPrice * 100) / 100,
+      eth: Math.round(ethPrice),
+      time: now.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+    };
+    return updated;
+  }, [historicalData, tslaPrice, ethPrice]);
+  const current = data[data.length - 1].tsla;
+  const prev = data[0].tsla;
+  const change = ((current - prev) / prev) * 100;
+  const isUp = change >= 0;
+  const CONTRACT = "0xC814A2F02436B9cCd1d1b13149aD7e1BD00DB1B4";
+  const shortContract = `${CONTRACT.slice(0, 8)}...${CONTRACT.slice(-6)}`;
+  const [copied, setCopied] = useState(false);
+  const copyAddress = useCallback(() => {
+    navigator.clipboard.writeText(CONTRACT).then(() => {
+      setCopied(true);
+      toast.success("TSLA address copied!");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
-      {/* Background orbs */}
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.1 }}
+      className="rounded-2xl p-6 relative overflow-hidden"
+      style={{
+        background:
+          "linear-gradient(135deg, oklch(0.17 0.012 260), oklch(0.14 0.008 260))",
+        border: "1px solid oklch(0.30 0.015 260 / 0.8)",
+        boxShadow: "0 8px 40px oklch(0 0 0 / 0.4)",
+      }}
+    >
+      {/* Background glow */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute -right-20 -top-20 w-80 h-80 rounded-full pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 60% 60% at 30% 40%, oklch(0.22 0.04 78 / 0.15), transparent), radial-gradient(ellipse 40% 40% at 70% 60%, oklch(0.20 0.03 250 / 0.12), transparent)",
+            "radial-gradient(circle, oklch(0.45 0.18 25 / 0.07) 0%, transparent 70%)",
         }}
       />
 
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 text-center max-w-md px-6"
-      >
-        {/* Logo */}
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.1, duration: 0.6 }}
-          className="flex justify-center mb-8"
-        >
-          <div
-            className="w-20 h-20 rounded-2xl flex items-center justify-center relative"
-            style={{
-              background:
-                "linear-gradient(135deg, oklch(0.22 0.04 78 / 0.8), oklch(0.18 0.02 260 / 0.9))",
-              boxShadow:
-                "0 0 40px oklch(0.76 0.12 78 / 0.2), inset 0 1px 0 oklch(0.76 0.12 78 / 0.3)",
-              border: "1px solid oklch(0.76 0.12 78 / 0.25)",
-            }}
-          >
-            <Wallet
-              className="w-10 h-10"
-              style={{ color: "oklch(0.76 0.12 78)" }}
-            />
+      <div className="relative z-10">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <div className="flex items-center gap-2.5 mb-1">
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+                style={{
+                  background: "oklch(0.45 0.18 25 / 0.2)",
+                  border: "1px solid oklch(0.55 0.18 25 / 0.4)",
+                  color: "#E31937",
+                }}
+              >
+                T
+              </div>
+              <div>
+                <p
+                  className="font-display font-semibold text-sm"
+                  style={{ color: "oklch(0.92 0.006 90)" }}
+                >
+                  TSLA Coin
+                </p>
+                <p className="text-xs text-muted-foreground font-mono">
+                  {shortContract}
+                </p>
+              </div>
+            </div>
           </div>
-        </motion.div>
+          <div className="text-right">
+            <div className="flex items-center justify-end gap-2 mb-0.5">
+              {isFresh && (
+                <span
+                  className="flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full"
+                  style={{
+                    background: "oklch(0.55 0.16 145 / 0.15)",
+                    color: "oklch(0.68 0.15 145)",
+                    border: "1px solid oklch(0.55 0.16 145 / 0.25)",
+                  }}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full animate-pulse"
+                    style={{ background: "oklch(0.68 0.15 145)" }}
+                  />
+                  LIVE
+                </span>
+              )}
+              {ethLoading && (
+                <span className="text-xs text-muted-foreground">
+                  Fetching live ETH price...
+                </span>
+              )}
+            </div>
+            <p
+              className="text-2xl font-mono font-semibold"
+              style={{ color: "oklch(0.92 0.006 90)" }}
+            >
+              {formatUSD(current)}
+            </p>
+            <p className="text-xs font-mono text-muted-foreground mt-0.5">
+              ETH{" "}
+              {new Intl.NumberFormat("en-US", {
+                style: "currency",
+                currency: "USD",
+                maximumFractionDigits: 0,
+              }).format(ethPrice)}{" "}
+              · TSLA {formatUSD(current)}
+            </p>
+            <div
+              className="flex items-center justify-end gap-1 mt-0.5"
+              style={{
+                color: isUp ? "oklch(0.68 0.15 145)" : "oklch(0.65 0.15 30)",
+              }}
+            >
+              {isUp ? (
+                <TrendingUp className="w-3.5 h-3.5" />
+              ) : (
+                <TrendingDown className="w-3.5 h-3.5" />
+              )}
+              <span className="text-xs font-mono font-medium">
+                {isUp ? "+" : ""}
+                {change.toFixed(2)}% (24h)
+              </span>
+            </div>
+          </div>
+        </div>
 
-        <motion.h1
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25, duration: 0.6 }}
-          className="text-5xl font-display font-semibold mb-3 tracking-tight"
-        >
-          <span className="gold-shimmer">CryptoVault</span>
-        </motion.h1>
+        {/* Chart */}
+        <div className="h-44">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart
+              data={data}
+              margin={{ top: 4, right: 0, left: -20, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="tslaGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#E31937" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#E31937" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="oklch(0.28 0.015 260 / 0.4)"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 10, fill: "oklch(0.50 0.005 260)" }}
+                tickLine={false}
+                axisLine={false}
+                interval={11}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fill: "oklch(0.50 0.005 260)" }}
+                tickLine={false}
+                axisLine={false}
+                domain={["auto", "auto"]}
+                tickFormatter={(v) => `$${v.toFixed(0)}`}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "oklch(0.20 0.012 260)",
+                  border: "1px solid oklch(0.32 0.015 260)",
+                  borderRadius: "8px",
+                  fontSize: 12,
+                  color: "oklch(0.92 0.006 90)",
+                }}
+                formatter={(value: number, _name: string, props: any) => [
+                  `TSLA $${value.toFixed(2)} · ETH $${props?.payload?.eth?.toLocaleString() ?? ""}`,
+                  "",
+                ]}
+                labelStyle={{ color: "oklch(0.60 0.005 260)" }}
+              />
+              <Area
+                type="monotone"
+                dataKey="tsla"
+                stroke="#E31937"
+                strokeWidth={2}
+                fill="url(#tslaGradient)"
+                dot={false}
+                activeDot={{ r: 4, fill: "#E31937", strokeWidth: 0 }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4, duration: 0.6 }}
-          className="text-muted-foreground text-lg mb-10 font-light"
-        >
-          Your sovereign digital asset vault, secured by the Internet Computer.
-        </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.55, duration: 0.5 }}
-        >
-          <Button
-            data-ocid="auth.primary_button"
-            onClick={login}
-            disabled={isLoggingIn}
-            className="w-full h-14 text-base font-medium tracking-wide"
+        <div className="flex items-center justify-between mt-3">
+          <p className="text-xs text-muted-foreground">
+            Price pegged to ETH · {TSLA_PEG_AT_ETH_1500} TSLA per ETH at $1,500
+          </p>
+          <span
+            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
             style={{
-              background:
-                "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
-              color: "oklch(0.12 0.01 260)",
-              boxShadow:
-                "0 4px 20px oklch(0.76 0.12 78 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.15)",
-              border: "none",
+              background: "oklch(0.45 0.18 25 / 0.12)",
+              color: "oklch(0.72 0.14 25 / 0.8)",
+              border: "1px solid oklch(0.50 0.18 25 / 0.20)",
             }}
           >
-            {isLoggingIn ? (
-              <>
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              <>
-                <Wallet className="mr-2 h-5 w-5" />
-                Connect with Internet Identity
-              </>
-            )}
-          </Button>
-        </motion.div>
+            <Zap className="w-2.5 h-2.5" />
+            Powered by Chainlink
+          </span>
+        </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7 }}
-          className="mt-6 text-xs text-muted-foreground"
-        >
-          Powered by on-chain authentication. No passwords.
-        </motion.p>
-      </motion.div>
-    </div>
+        {/* Send / Receive buttons */}
+        {(onSend || onReceive) && (
+          <div className="mt-5 space-y-3">
+            <div className="flex gap-3">
+              {onSend && (
+                <Button
+                  data-ocid="tsla_chart.send_button"
+                  onClick={onSend}
+                  className="flex-1 h-11 gap-2 font-medium rounded-xl text-sm"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.76 0.12 78 / 0.18), oklch(0.68 0.14 68 / 0.12))",
+                    border: "1px solid oklch(0.76 0.12 78 / 0.35)",
+                    color: "oklch(0.84 0.10 78)",
+                  }}
+                >
+                  <Send className="w-4 h-4" />
+                  Send TSLA
+                </Button>
+              )}
+              {onReceive && (
+                <Button
+                  data-ocid="tsla_chart.receive_button"
+                  onClick={onReceive}
+                  className="flex-1 h-11 gap-2 font-medium rounded-xl text-sm"
+                  style={{
+                    background: "oklch(0.58 0.15 145 / 0.12)",
+                    border: "1px solid oklch(0.58 0.15 145 / 0.30)",
+                    color: "oklch(0.72 0.14 145)",
+                  }}
+                >
+                  <ArrowDownLeft className="w-4 h-4" />
+                  Receive TSLA
+                </Button>
+              )}
+            </div>
+
+            {/* TSLA Contract Address */}
+            <button
+              type="button"
+              data-ocid="tsla_chart.address_panel"
+              onClick={copyAddress}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors group"
+              style={{
+                background: "oklch(0.15 0.008 260 / 0.7)",
+                border: "1px solid oklch(0.28 0.012 260 / 0.5)",
+              }}
+            >
+              <div className="text-left">
+                <p
+                  className="text-xs text-muted-foreground mb-0.5 uppercase tracking-widest"
+                  style={{ fontSize: "10px" }}
+                >
+                  Your TSLA Address
+                </p>
+                <p
+                  className="font-mono text-xs"
+                  style={{
+                    color: "oklch(0.65 0.008 260)",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {shortContract}
+                </p>
+              </div>
+              <div
+                className="flex items-center gap-1.5 text-xs"
+                style={{ color: "oklch(0.55 0.008 260)" }}
+              >
+                {copied ? (
+                  <Check
+                    className="w-3.5 h-3.5"
+                    style={{ color: "oklch(0.68 0.15 145)" }}
+                  />
+                ) : (
+                  <Copy className="w-3.5 h-3.5 group-hover:opacity-100 opacity-60" />
+                )}
+                <span className="group-hover:opacity-100 opacity-60 text-xs">
+                  {copied ? "Copied!" : "Copy"}
+                </span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -221,46 +523,45 @@ function AssetCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.07, duration: 0.5 }}
-      data-ocid={`asset.card.${index + 1}` as any}
-      className="card-glow rounded-xl p-5 transition-all duration-300 cursor-default group"
+      transition={{ delay: index * 0.05, duration: 0.45 }}
+      data-ocid={`asset.item.${index + 1}` as any}
+      className="rounded-xl p-4 relative overflow-hidden group"
       style={{
         background:
-          "linear-gradient(135deg, oklch(0.19 0.012 260 / 0.95), oklch(0.17 0.008 260 / 0.98))",
+          "linear-gradient(135deg, oklch(0.19 0.012 260 / 0.9), oklch(0.16 0.008 260))",
+        border: "1px solid oklch(0.28 0.015 260 / 0.6)",
       }}
     >
-      <div className="flex items-start justify-between mb-4">
+      <div
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none"
+        style={{ boxShadow: `inset 0 0 0 1px ${color}25` }}
+      />
+      <div className="flex items-center justify-between mb-3">
         <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center text-xl font-bold"
+          className="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm"
           style={{
-            background: `${color}20`,
-            border: `1px solid ${color}40`,
+            background: `${color}18`,
+            border: `1px solid ${color}35`,
             color,
           }}
         >
           {icon}
         </div>
-        <span
-          className="text-xs font-mono px-2 py-1 rounded-md font-medium"
-          style={{
-            background: `${color}15`,
-            color,
-            border: `1px solid ${color}25`,
-          }}
-        >
+        <span className="text-xs text-muted-foreground font-medium">
           {asset}
         </span>
       </div>
-      <div>
-        <p className="text-2xl font-mono font-medium text-foreground">
-          {formatAmount(balance, asset)}
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          {formatUSD(usdValue)}
-        </p>
-      </div>
+      <p
+        className="font-mono font-semibold text-base truncate"
+        style={{ color: "oklch(0.92 0.006 90)" }}
+      >
+        {formatAmount(balance, asset)}
+      </p>
+      <p className="text-xs text-muted-foreground mt-0.5">
+        {formatUSD(usdValue)}
+      </p>
     </motion.div>
   );
 }
@@ -352,15 +653,21 @@ function TransactionRow({
 function SendModal({
   open,
   onClose,
+  defaultAsset,
 }: {
   open: boolean;
   onClose: () => void;
+  defaultAsset?: Asset;
 }) {
-  const [asset, setAsset] = useState<Asset>(Asset.BTC);
+  const [asset, setAsset] = useState<Asset>(defaultAsset ?? Asset.BTC);
   const [amount, setAmount] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [note, setNote] = useState("");
   const sendAsset = useSendAsset();
+
+  useEffect(() => {
+    if (open) setAsset(defaultAsset ?? Asset.BTC);
+  }, [open, defaultAsset]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -430,7 +737,7 @@ function SendModal({
             <Input
               data-ocid="send.input"
               type="number"
-              placeholder={`0.${"0".repeat(ASSET_DECIMALS[asset])}`}
+              placeholder={`0.${"|0".repeat(ASSET_DECIMALS[asset])}`}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="bg-secondary border-border font-mono"
@@ -502,15 +809,21 @@ function SendModal({
 function ReceiveModal({
   open,
   onClose,
+  defaultAsset,
 }: {
   open: boolean;
   onClose: () => void;
+  defaultAsset?: Asset;
 }) {
-  const [asset, setAsset] = useState<Asset>(Asset.BTC);
+  const [asset, setAsset] = useState<Asset>(defaultAsset ?? Asset.BTC);
   const [amount, setAmount] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [note, setNote] = useState("");
   const receiveAsset = useReceiveAsset();
+
+  useEffect(() => {
+    if (open) setAsset(defaultAsset ?? Asset.BTC);
+  }, [open, defaultAsset]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -578,9 +891,9 @@ function ReceiveModal({
               Amount
             </Label>
             <Input
-              data-ocid="receive.input"
+              data-ocid="receive.amount.input"
               type="number"
-              placeholder={`0.${"0".repeat(ASSET_DECIMALS[asset])}`}
+              placeholder={`0.${"|0".repeat(ASSET_DECIMALS[asset])}`}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="bg-secondary border-border font-mono"
@@ -663,8 +976,11 @@ function DemoFundsModal({
   const PRESETS: Record<Asset, number[]> = {
     [Asset.BTC]: [0.01, 0.1, 0.5],
     [Asset.ETH]: [0.1, 1, 5],
+    [Asset.BNB]: [0.5, 2, 10],
+    [Asset.SOL]: [1, 10, 50],
     [Asset.ICP]: [10, 100, 1000],
     [Asset.USDT]: [100, 1000, 10000],
+    [Asset.TSLA]: [10, 100, 500],
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -731,7 +1047,6 @@ function DemoFundsModal({
             </Select>
           </div>
 
-          {/* Quick presets */}
           <div>
             <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
               Quick amounts
@@ -816,7 +1131,7 @@ function DemoFundsModal({
 }
 
 // ------- Dashboard -------
-function Dashboard() {
+function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
   const { clear, identity } = useInternetIdentity();
   const { actor, isFetching: actorLoading } = useActor();
   const { data: balances, isLoading: balancesLoading } = useBalances();
@@ -826,10 +1141,13 @@ function Dashboard() {
 
   const [sendOpen, setSendOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  const [sendDefaultAsset, setSendDefaultAsset] = useState<Asset>(Asset.BTC);
+  const [receiveDefaultAsset, setReceiveDefaultAsset] = useState<Asset>(
+    Asset.BTC,
+  );
   const [demoOpen, setDemoOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
-  // Initialize wallet on first load
   useEffect(() => {
     if (actor && !actorLoading && !initialized) {
       setInitialized(true);
@@ -851,7 +1169,6 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur-xl border-b border-border/50">
         <div
           className="absolute inset-0"
@@ -859,26 +1176,41 @@ function Dashboard() {
         />
         <div className="relative max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{
-                background: "oklch(0.76 0.12 78 / 0.15)",
-                border: "1px solid oklch(0.76 0.12 78 / 0.3)",
-              }}
+            <button
+              type="button"
+              onClick={() => setPage("home")}
+              className="flex items-center gap-2 transition-opacity hover:opacity-80"
             >
-              <Wallet
-                className="w-4 h-4"
-                style={{ color: "oklch(0.76 0.12 78)" }}
-              />
-            </div>
-            <div>
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                style={{
+                  background: "oklch(0.76 0.12 78 / 0.15)",
+                  border: "1px solid oklch(0.76 0.12 78 / 0.3)",
+                }}
+              >
+                <Wallet
+                  className="w-4 h-4"
+                  style={{ color: "oklch(0.76 0.12 78)" }}
+                />
+              </div>
               <p
-                className="text-sm font-display font-semibold"
+                className="text-sm font-display font-semibold hidden sm:block"
                 style={{ color: "oklch(0.76 0.12 78)" }}
               >
-                {displayName || "CryptoVault"}
+                TRUPTARWallet
               </p>
+            </button>
+            <div
+              className="hidden sm:block w-px h-4"
+              style={{ background: "oklch(0.30 0.015 260)" }}
+            />
+            <div className="hidden sm:block">
               <p className="text-xs text-muted-foreground font-mono">
+                {displayName ? (
+                  <span style={{ color: "oklch(0.65 0.01 90)" }}>
+                    {displayName}
+                  </span>
+                ) : null}{" "}
                 {shortPrincipal}
               </p>
             </div>
@@ -898,7 +1230,6 @@ function Dashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-        {/* Portfolio Summary Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -906,7 +1237,6 @@ function Dashboard() {
           data-ocid="portfolio.card"
           className="portfolio-card noise-bg rounded-2xl p-8 relative overflow-hidden"
         >
-          {/* Decorative background rings */}
           <div
             className="absolute -right-16 -top-16 w-64 h-64 rounded-full pointer-events-none"
             style={{
@@ -956,7 +1286,18 @@ function Dashboard() {
           </div>
         </motion.div>
 
-        {/* Action Buttons */}
+        {/* TSLA Price Chart */}
+        <TSLAPriceChart
+          onSend={() => {
+            setSendDefaultAsset(Asset.TSLA);
+            setSendOpen(true);
+          }}
+          onReceive={() => {
+            setReceiveDefaultAsset(Asset.TSLA);
+            setReceiveOpen(true);
+          }}
+        />
+
         <div className="grid grid-cols-3 gap-3">
           {[
             {
@@ -1007,7 +1348,6 @@ function Dashboard() {
           ))}
         </div>
 
-        {/* Asset Grid */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display text-lg font-semibold">Your Assets</h3>
@@ -1060,7 +1400,6 @@ function Dashboard() {
           )}
         </section>
 
-        {/* Transaction History */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display text-lg font-semibold">
@@ -1117,7 +1456,6 @@ function Dashboard() {
         </section>
       </main>
 
-      {/* Footer */}
       <footer className="max-w-5xl mx-auto px-4 sm:px-6 py-8 text-center">
         <p className="text-xs text-muted-foreground">
           &copy; {new Date().getFullYear()}. Built with{" "}
@@ -1134,9 +1472,16 @@ function Dashboard() {
         </p>
       </footer>
 
-      {/* Modals */}
-      <SendModal open={sendOpen} onClose={() => setSendOpen(false)} />
-      <ReceiveModal open={receiveOpen} onClose={() => setReceiveOpen(false)} />
+      <SendModal
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        defaultAsset={sendDefaultAsset}
+      />
+      <ReceiveModal
+        open={receiveOpen}
+        onClose={() => setReceiveOpen(false)}
+        defaultAsset={receiveDefaultAsset}
+      />
       <DemoFundsModal open={demoOpen} onClose={() => setDemoOpen(false)} />
 
       <Toaster
@@ -1153,8 +1498,269 @@ function Dashboard() {
   );
 }
 
+// ------- Login Screen -------
+function LoginScreen({ setPage }: { setPage: (p: AppPage) => void }) {
+  const { login, isLoggingIn } = useInternetIdentity();
+
+  return (
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 60% 60% at 30% 40%, oklch(0.22 0.04 78 / 0.15), transparent), radial-gradient(ellipse 40% 40% at 70% 60%, oklch(0.20 0.03 250 / 0.12), transparent)",
+        }}
+      />
+
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 text-center max-w-md px-6"
+      >
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.1, duration: 0.6 }}
+          className="flex justify-center mb-8"
+        >
+          <div
+            className="w-20 h-20 rounded-2xl flex items-center justify-center relative"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.22 0.04 78 / 0.8), oklch(0.18 0.02 260 / 0.9))",
+              boxShadow:
+                "0 0 40px oklch(0.76 0.12 78 / 0.2), inset 0 1px 0 oklch(0.76 0.12 78 / 0.3)",
+              border: "1px solid oklch(0.76 0.12 78 / 0.25)",
+            }}
+          >
+            <Wallet
+              className="w-10 h-10"
+              style={{ color: "oklch(0.76 0.12 78)" }}
+            />
+          </div>
+        </motion.div>
+
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25, duration: 0.6 }}
+          className="text-5xl font-display font-semibold mb-3 tracking-tight"
+        >
+          <span className="gold-shimmer">TRUPTARWallet</span>
+        </motion.h1>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4, duration: 0.6 }}
+          className="text-muted-foreground text-lg mb-10 font-light"
+        >
+          Your sovereign digital asset vault, secured by the Internet Computer.
+        </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.55, duration: 0.5 }}
+          className="space-y-3"
+        >
+          <Button
+            data-ocid="auth.primary_button"
+            onClick={login}
+            disabled={isLoggingIn}
+            className="w-full h-14 text-base font-medium tracking-wide"
+            style={{
+              background:
+                "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
+              color: "oklch(0.12 0.01 260)",
+              boxShadow:
+                "0 4px 20px oklch(0.76 0.12 78 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.15)",
+              border: "none",
+            }}
+          >
+            {isLoggingIn ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Connecting...
+              </>
+            ) : (
+              <>
+                <Wallet className="mr-2 h-5 w-5" />
+                Connect with Internet Identity
+              </>
+            )}
+          </Button>
+
+          <Button
+            variant="ghost"
+            onClick={() => setPage("home")}
+            className="w-full h-10 text-sm text-muted-foreground"
+          >
+            <Home className="mr-2 h-4 w-4" />
+            Back to Home
+          </Button>
+        </motion.div>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.7 }}
+          className="mt-6 text-xs text-muted-foreground"
+        >
+          Powered by Internet Computer · Secured by ICP
+        </motion.p>
+      </motion.div>
+    </div>
+  );
+}
+
+// ------- Investment Sub-App -------
+type InvestView = "list" | "detail" | "confirm" | "active";
+
+function InvestmentSection() {
+  const {
+    tslaBalance,
+    investments,
+    invest,
+    withdraw,
+    computeInterest,
+    syncMatured,
+  } = useInvestments();
+  const [view, setView] = useState<InvestView>("list");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
+  const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
+  const [selectedProject, setSelectedProject] = useState<TeslaProject | null>(
+    null,
+  );
+  const [sendOpen, setSendOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+
+  const handleSelectInvestment = (id: string) => {
+    setSelectedProjectId(id);
+    setView("detail");
+  };
+
+  const handleSelectPackage = (pkg: Package, project: TeslaProject) => {
+    setSelectedPackage(pkg);
+    setSelectedProject(project);
+    setView("confirm");
+  };
+
+  const handleConfirm = (amount: number) => {
+    if (!selectedProjectId || !selectedProject || !selectedPackage) return;
+    invest(selectedProjectId, selectedProject.name, selectedPackage, amount);
+    toast.success(
+      `Investment confirmed! ${amount.toLocaleString()} TSLA invested in ${selectedProject.name}`,
+    );
+    setView("active");
+  };
+
+  return (
+    <>
+      <AnimatePresence mode="wait">
+        {view === "list" && (
+          <motion.div
+            key="inv-list"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <InvestmentsPage
+              tslaBalance={tslaBalance}
+              onSelectInvestment={handleSelectInvestment}
+              onViewActive={() => setView("active")}
+              onSendTSLA={() => setSendOpen(true)}
+              onReceiveTSLA={() => setReceiveOpen(true)}
+            />
+          </motion.div>
+        )}
+        {view === "detail" && selectedProjectId && (
+          <motion.div
+            key="inv-detail"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <InvestmentDetailPage
+              projectId={selectedProjectId}
+              tslaBalance={tslaBalance}
+              onBack={() => setView("list")}
+              onSelectPackage={handleSelectPackage}
+            />
+          </motion.div>
+        )}
+        {view === "confirm" && selectedProject && selectedPackage && (
+          <motion.div
+            key="inv-confirm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <InvestmentConfirmPage
+              project={selectedProject}
+              pkg={selectedPackage}
+              tslaBalance={tslaBalance}
+              onBack={() => setView("detail")}
+              onConfirm={handleConfirm}
+            />
+          </motion.div>
+        )}
+        {view === "active" && (
+          <motion.div
+            key="inv-active"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <ActiveInvestmentsPage
+              tslaBalance={tslaBalance}
+              investments={investments}
+              computeInterest={computeInterest}
+              onWithdraw={(id) => {
+                withdraw(id);
+                toast.success("Investment withdrawn to your TSLA wallet!");
+              }}
+              onBack={() => setView("list")}
+              syncMatured={syncMatured}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <SendModal
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        defaultAsset={Asset.TSLA}
+      />
+      <ReceiveModal
+        open={receiveOpen}
+        onClose={() => setReceiveOpen(false)}
+        defaultAsset={Asset.TSLA}
+      />
+      <Toaster
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: "oklch(0.20 0.012 260)",
+            border: "1px solid oklch(0.30 0.015 260)",
+            color: "oklch(0.92 0.006 90)",
+          },
+        }}
+      />
+    </>
+  );
+}
+
 // ------- App Root -------
 export default function App() {
+  const [page, setPage] = useState<AppPage>("home");
   const { isLoginSuccess, isInitializing } = useInternetIdentity();
 
   if (isInitializing) {
@@ -1175,29 +1781,73 @@ export default function App() {
     );
   }
 
+  // Dashboard route
+  if (page === "dashboard") {
+    return (
+      <AnimatePresence mode="wait">
+        {isLoginSuccess ? (
+          <motion.div
+            key="dashboard"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Dashboard setPage={setPage} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="login"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <LoginScreen setPage={setPage} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    );
+  }
+
+  // Investments route
+  if (page === "investments") {
+    return (
+      <>
+        <NavBar page={page} setPage={setPage} isLoggedIn={isLoginSuccess} />
+        <InvestmentSection />
+      </>
+    );
+  }
+
+  // Public pages
   return (
-    <AnimatePresence mode="wait">
-      {isLoginSuccess ? (
-        <motion.div
-          key="dashboard"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <Dashboard />
-        </motion.div>
-      ) : (
-        <motion.div
-          key="login"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <LoginScreen />
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <>
+      <NavBar page={page} setPage={setPage} isLoggedIn={isLoginSuccess} />
+      <AnimatePresence mode="wait">
+        {page === "home" && (
+          <motion.div
+            key="home"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3 }}
+          >
+            <HomePage setPage={setPage} />
+          </motion.div>
+        )}
+        {page === "about-tsla" && (
+          <motion.div
+            key="about-tsla"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3 }}
+          >
+            <AboutTSLACoin setPage={setPage} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

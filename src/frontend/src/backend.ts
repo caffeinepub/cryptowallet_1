@@ -107,9 +107,12 @@ export interface Transaction {
     amount: number;
 }
 export enum Asset {
+    BNB = "BNB",
     BTC = "BTC",
     ETH = "ETH",
     ICP = "ICP",
+    SOL = "SOL",
+    TSLA = "TSLA",
     USDT = "USDT"
 }
 export enum Direction {
@@ -426,15 +429,21 @@ function from_candid_variant_n17(_uploadFile: (file: ExternalBlob) => Promise<Ui
     return "receive" in value ? Direction.receive : "send" in value ? Direction.send : value;
 }
 function from_candid_variant_n9(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: {
+    BNB: null;
+} | {
     BTC: null;
 } | {
     ETH: null;
 } | {
     ICP: null;
 } | {
+    SOL: null;
+} | {
+    TSLA: null;
+} | {
     USDT: null;
 }): Asset {
-    return "BTC" in value ? Asset.BTC : "ETH" in value ? Asset.ETH : "ICP" in value ? Asset.ICP : "USDT" in value ? Asset.USDT : value;
+    return "BNB" in value ? Asset.BNB : "BTC" in value ? Asset.BTC : "ETH" in value ? Asset.ETH : "ICP" in value ? Asset.ICP : "SOL" in value ? Asset.SOL : "TSLA" in value ? Asset.TSLA : "USDT" in value ? Asset.USDT : value;
 }
 function from_candid_vec_n13(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: Array<_Transaction>): Array<Transaction> {
     return value.map((x)=>from_candid_Transaction_n14(_uploadFile, _downloadFile, x));
@@ -449,20 +458,32 @@ function to_candid_UserRole_n3(_uploadFile: (file: ExternalBlob) => Promise<Uint
     return to_candid_variant_n4(_uploadFile, _downloadFile, value);
 }
 function to_candid_variant_n2(_uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, value: Asset): {
+    BNB: null;
+} | {
     BTC: null;
 } | {
     ETH: null;
 } | {
     ICP: null;
 } | {
+    SOL: null;
+} | {
+    TSLA: null;
+} | {
     USDT: null;
 } {
-    return value == Asset.BTC ? {
+    return value == Asset.BNB ? {
+        BNB: null
+    } : value == Asset.BTC ? {
         BTC: null
     } : value == Asset.ETH ? {
         ETH: null
     } : value == Asset.ICP ? {
         ICP: null
+    } : value == Asset.SOL ? {
+        SOL: null
+    } : value == Asset.TSLA ? {
+        TSLA: null
     } : value == Asset.USDT ? {
         USDT: null
     } : value;

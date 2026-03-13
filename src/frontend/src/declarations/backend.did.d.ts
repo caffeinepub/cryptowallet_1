@@ -10,9 +10,12 @@ import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 import type { Principal } from '@icp-sdk/core/principal';
 
-export type Asset = { 'BTC' : null } |
+export type Asset = { 'BNB' : null } |
+  { 'BTC' : null } |
   { 'ETH' : null } |
   { 'ICP' : null } |
+  { 'SOL' : null } |
+  { 'TSLA' : null } |
   { 'USDT' : null };
 export interface AssetBalance { 'balance' : number, 'asset' : Asset }
 export type Direction = { 'receive' : null } |

@@ -9,8 +9,11 @@ import Text "mo:core/Text";
 import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import Int "mo:core/Int";
+
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
+
+// Specify the migration function in with-clause
 
 actor {
   // Initialize the access control system
@@ -29,8 +32,11 @@ actor {
   public type Asset = {
     #BTC;
     #ETH;
+    #BNB;
+    #SOL;
     #ICP;
     #USDT;
+    #TSLA;
   };
 
   public type Direction = {
@@ -67,8 +73,11 @@ actor {
   let defaultBalances : [(Asset, Float)] = [
     (#BTC, 0.0),
     (#ETH, 0.0),
+    (#BNB, 0.0),
+    (#SOL, 0.0),
     (#ICP, 0.0),
     (#USDT, 0.0),
+    (#TSLA, 0.0),
   ];
 
   func getUserWalletOrTrap(user : Principal) : UserWallet {
@@ -214,8 +223,11 @@ actor {
   };
 
   public shared ({ caller }) func receiveAsset(asset : Asset, amount : Float, counterparty : Text, note : Text) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can receive assets");
+    // SECURITY FIX: receiveAsset should be admin-only to prevent users from arbitrarily
+    // adding assets to their wallets. In a production system, this would require
+    // cryptographic proof of actual asset transfer.
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can receive assets");
     };
     validateAmount(amount);
     let wallet = getUserWalletOrTrap(caller);
@@ -253,3 +265,4 @@ actor {
     wallet.transactions.sort();
   };
 };
+

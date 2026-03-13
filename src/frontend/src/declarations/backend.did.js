@@ -9,9 +9,12 @@
 import { IDL } from '@icp-sdk/core/candid';
 
 export const Asset = IDL.Variant({
+  'BNB' : IDL.Null,
   'BTC' : IDL.Null,
   'ETH' : IDL.Null,
   'ICP' : IDL.Null,
+  'SOL' : IDL.Null,
+  'TSLA' : IDL.Null,
   'USDT' : IDL.Null,
 });
 export const UserRole = IDL.Variant({
@@ -65,9 +68,12 @@ export const idlInitArgs = [];
 
 export const idlFactory = ({ IDL }) => {
   const Asset = IDL.Variant({
+    'BNB' : IDL.Null,
     'BTC' : IDL.Null,
     'ETH' : IDL.Null,
     'ICP' : IDL.Null,
+    'SOL' : IDL.Null,
+    'TSLA' : IDL.Null,
     'USDT' : IDL.Null,
   });
   const UserRole = IDL.Variant({
