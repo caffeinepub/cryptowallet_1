@@ -1,8 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ArrowLeft, Clock, Coins, TrendingUp } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Investment } from "../hooks/useInvestments";
 
 interface ActiveInvestmentsPageProps {
@@ -183,16 +191,175 @@ export default function ActiveInvestmentsPage({
     return () => clearInterval(interval);
   }, [syncMatured]);
 
+  // Maturity detection
+  const prevMaturedIds = useRef<Set<string>>(new Set());
+  const [justMaturedInv, setJustMaturedInv] = useState<Investment | null>(null);
+
+  useEffect(() => {
+    const newlyMatured = investments.filter(
+      (inv) => inv.status === "matured" && !prevMaturedIds.current.has(inv.id),
+    );
+    // Update ref with all currently matured IDs
+    const maturedNow = investments
+      .filter((inv) => inv.status === "matured")
+      .map((inv) => inv.id);
+    prevMaturedIds.current = new Set(maturedNow);
+    if (newlyMatured.length > 0) {
+      setJustMaturedInv(newlyMatured[0]);
+    }
+  }, [investments]);
+
   const active = investments.filter(
     (i) => i.status === "active" || i.status === "matured",
   );
   const history = investments.filter((i) => i.status === "withdrawn");
+
+  const maturedInterest = justMaturedInv
+    ? justMaturedInv.amount * justMaturedInv.interestRate
+    : 0;
 
   return (
     <div
       data-ocid="active_investments.page"
       className="min-h-screen px-4 sm:px-6 py-10 max-w-4xl mx-auto"
     >
+      {/* Maturity Dialog */}
+      <Dialog
+        open={!!justMaturedInv}
+        onOpenChange={(open) => !open && setJustMaturedInv(null)}
+      >
+        <DialogContent
+          data-ocid="maturity.dialog"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.19 0.012 260 / 0.98), oklch(0.16 0.008 260))",
+            border: "1px solid oklch(0.76 0.12 78 / 0.3)",
+            color: "oklch(0.90 0.01 260)",
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle
+              className="text-2xl font-display font-semibold"
+              style={{ color: "oklch(0.76 0.12 78)" }}
+            >
+              Investment Matured! 🎉
+            </DialogTitle>
+            <DialogDescription style={{ color: "oklch(0.60 0.01 260)" }}>
+              Your investment has reached maturity and is ready to withdraw.
+            </DialogDescription>
+          </DialogHeader>
+
+          {justMaturedInv && (
+            <div className="py-2 space-y-4">
+              <div
+                className="rounded-xl p-4"
+                style={{
+                  background: "oklch(0.22 0.015 260 / 0.8)",
+                  border: "1px solid oklch(0.76 0.12 78 / 0.15)",
+                }}
+              >
+                <p
+                  className="font-display font-semibold text-lg mb-0.5"
+                  style={{ color: "oklch(0.76 0.12 78)" }}
+                >
+                  {justMaturedInv.projectName}
+                </p>
+                <p
+                  className="text-sm"
+                  style={{ color: "oklch(0.55 0.01 260)" }}
+                >
+                  {justMaturedInv.packageName} Package
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div
+                  className="rounded-lg p-3 text-center"
+                  style={{ background: "oklch(0.21 0.012 260)" }}
+                >
+                  <p
+                    className="text-xs text-muted-foreground mb-1"
+                    style={{ color: "oklch(0.50 0.01 260)" }}
+                  >
+                    Invested
+                  </p>
+                  <p
+                    className="font-mono font-semibold text-sm"
+                    style={{ color: "oklch(0.85 0.01 260)" }}
+                  >
+                    {justMaturedInv.amount.toLocaleString()} TSLA
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg p-3 text-center"
+                  style={{ background: "oklch(0.21 0.012 260)" }}
+                >
+                  <p
+                    className="text-xs mb-1"
+                    style={{ color: "oklch(0.50 0.01 260)" }}
+                  >
+                    Interest Earned
+                  </p>
+                  <p
+                    className="font-mono font-semibold text-sm"
+                    style={{ color: "oklch(0.72 0.18 150)" }}
+                  >
+                    +{maturedInterest.toFixed(2)} TSLA
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg p-3 text-center"
+                  style={{
+                    background: "oklch(0.76 0.12 78 / 0.08)",
+                    border: "1px solid oklch(0.76 0.12 78 / 0.2)",
+                  }}
+                >
+                  <p
+                    className="text-xs mb-1"
+                    style={{ color: "oklch(0.60 0.10 78)" }}
+                  >
+                    Total Back
+                  </p>
+                  <p
+                    className="font-mono font-semibold text-sm"
+                    style={{ color: "oklch(0.76 0.12 78)" }}
+                  >
+                    {(justMaturedInv.amount + maturedInterest).toFixed(2)} TSLA
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              data-ocid="maturity.later_button"
+              variant="ghost"
+              onClick={() => setJustMaturedInv(null)}
+              style={{ color: "oklch(0.60 0.01 260)" }}
+            >
+              Later
+            </Button>
+            <Button
+              data-ocid="maturity.withdraw_button"
+              onClick={() => {
+                if (justMaturedInv) onWithdraw(justMaturedInv.id);
+                setJustMaturedInv(null);
+              }}
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
+                color: "oklch(0.12 0.01 260)",
+                border: "none",
+                fontWeight: 700,
+              }}
+            >
+              Withdraw to Wallet
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Back */}
       <motion.button
         type="button"

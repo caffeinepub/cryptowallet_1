@@ -52,7 +52,6 @@ import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useInvestments } from "./hooks/useInvestments";
 import {
-  useAddMockBalance,
   useBalances,
   useDisplayName,
   useInitializeWallet,
@@ -134,64 +133,80 @@ function formatDate(timestamp: bigint): string {
   }).format(new Date(ms));
 }
 
-// ------- Live ETH Price Hook -------
-function useLiveEthPrice() {
-  const [ethPrice, setEthPrice] = useState<number>(ETH_BASE_PRICE);
+// ------- Live Prices Hook -------
+function useLivePrices() {
+  const [prices, setPrices] = useState<Record<Asset, number>>({
+    [Asset.BTC]: 65000,
+    [Asset.ETH]: ETH_BASE_PRICE,
+    [Asset.BNB]: 600,
+    [Asset.SOL]: 180,
+    [Asset.ICP]: 12,
+    [Asset.USDT]: 1,
+    [Asset.TSLA]: TSLA_PEG_AT_ETH_1500 * (ETH_BASE_PRICE / 1500),
+  });
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const isFresh = lastUpdated
     ? Date.now() - lastUpdated.getTime() < 60_000
     : false;
 
-  const fetchPrice = useCallback(async () => {
+  const fetchPrices = useCallback(async () => {
     try {
       const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,solana,tether&vs_currencies=usd",
       );
       if (!res.ok) throw new Error("fetch failed");
       const json = await res.json();
-      const price = json?.ethereum?.usd;
-      if (typeof price === "number" && price > 0) {
-        setEthPrice(price);
+      const eth = json?.ethereum?.usd;
+      if (typeof eth === "number" && eth > 0) {
+        setPrices({
+          [Asset.BTC]: json?.bitcoin?.usd ?? 65000,
+          [Asset.ETH]: eth,
+          [Asset.BNB]: json?.binancecoin?.usd ?? 600,
+          [Asset.SOL]: json?.solana?.usd ?? 180,
+          [Asset.ICP]: 12,
+          [Asset.USDT]: json?.tether?.usd ?? 1,
+          [Asset.TSLA]: TSLA_PEG_AT_ETH_1500 * (eth / 1500),
+        });
         setLastUpdated(new Date());
       }
     } catch {
-      // fall back to ETH_BASE_PRICE silently
+      // keep last known prices
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchPrice();
-    const id = setInterval(fetchPrice, 30_000);
+    fetchPrices();
+    const id = setInterval(fetchPrices, 30_000);
     return () => clearInterval(id);
-  }, [fetchPrice]);
+  }, [fetchPrices]);
 
-  return { ethPrice, loading, lastUpdated, isFresh };
+  return { prices, loading, isFresh };
 }
 
-// ------- TSLA Price Chart -------
+// ------- Helper: generate historical price data -------
 function generatePriceData() {
-  const points: { time: string; tsla: number; eth: number }[] = [];
-  let eth = ETH_BASE_PRICE;
-  const now = Date.now();
-  for (let i = 47; i >= 0; i--) {
-    eth += (Math.random() - 0.48) * 80;
-    eth = Math.max(2800, Math.min(3800, eth));
-    const tsla = TSLA_PEG_AT_ETH_1500 * (eth / 1500);
-    const t = new Date(now - i * 3600 * 1000);
-    points.push({
+  const baseEth = ETH_BASE_PRICE;
+  const points = 48;
+  const now = new Date();
+  return Array.from({ length: points }, (_, i) => {
+    const t = new Date(now.getTime() - (points - 1 - i) * 30 * 60 * 1000);
+    const noise =
+      (Math.sin(i * 0.7) + Math.sin(i * 1.3) + Math.sin(i * 0.4)) / 3;
+    const eth = Math.round(baseEth * (1 + noise * 0.04));
+    const tsla = Math.round(TSLA_PEG_AT_ETH_1500 * (eth / 1500) * 100) / 100;
+    return {
       time: t.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       }),
-      tsla: Math.round(tsla * 100) / 100,
-      eth: Math.round(eth),
-    });
-  }
-  return points;
+      tsla,
+      eth,
+    };
+  });
 }
 
 function TSLAPriceChart({
@@ -201,8 +216,9 @@ function TSLAPriceChart({
   onSend?: () => void;
   onReceive?: () => void;
 }) {
-  const { ethPrice, loading: ethLoading, isFresh } = useLiveEthPrice();
-  const tslaPrice = TSLA_PEG_AT_ETH_1500 * (ethPrice / 1500);
+  const { prices: livePrices, loading: ethLoading, isFresh } = useLivePrices();
+  const ethPrice = livePrices[Asset.ETH];
+  const tslaPrice = livePrices[Asset.TSLA];
   const historicalData = useMemo(() => generatePriceData(), []);
   const data = useMemo(() => {
     const updated = [...historicalData];
@@ -402,9 +418,6 @@ function TSLAPriceChart({
         </div>
 
         <div className="flex items-center justify-between mt-3">
-          <p className="text-xs text-muted-foreground">
-            Price pegged to ETH · {TSLA_PEG_AT_ETH_1500} TSLA per ETH at $1,500
-          </p>
           <span
             className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
             style={{
@@ -512,12 +525,14 @@ function AssetCard({
   asset,
   balance,
   index,
+  livePrice,
 }: {
   asset: Asset;
   balance: number;
   index: number;
+  livePrice?: number;
 }) {
-  const usdValue = balance * USD_PRICES[asset];
+  const usdValue = balance * (livePrice ?? USD_PRICES[asset]);
   const color = ASSET_COLORS[asset];
   const icon = ASSET_ICONS[asset];
 
@@ -562,6 +577,20 @@ function AssetCard({
       <p className="text-xs text-muted-foreground mt-0.5">
         {formatUSD(usdValue)}
       </p>
+      {livePrice !== undefined && (
+        <div className="flex items-center gap-1 mt-1.5">
+          <span
+            className="w-1.5 h-1.5 rounded-full animate-pulse"
+            style={{ background: "oklch(0.68 0.15 145)" }}
+          />
+          <span
+            className="text-xs font-mono"
+            style={{ color: "oklch(0.55 0.01 260)" }}
+          >
+            {formatUSD(livePrice)} / coin
+          </span>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -805,43 +834,124 @@ function SendModal({
   );
 }
 
+// ------- Wallet Address Derivation -------
+function deriveWalletAddress(principal: string, asset: Asset): string {
+  // Simple deterministic hash from principal + asset
+  let hash = 0;
+  const str = principal + asset;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  // Expand to 40 hex chars using xor-shift
+  let seed = hash;
+  const hexParts: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    seed = (seed ^ (seed << 13) ^ (seed >>> 17) ^ (seed << 5)) >>> 0;
+    hexParts.push(seed.toString(16).padStart(8, "0"));
+  }
+  const hexStr = hexParts.join("");
+
+  if (asset === Asset.BTC) {
+    // bc1q + 38 chars alphanumeric (no 0/O/I/l)
+    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+    let addr = "bc1q";
+    for (let i = 0; i < 38; i++) {
+      const idx = Number.parseInt(hexStr[i % hexStr.length], 16) % chars.length;
+      addr += chars[idx];
+    }
+    return addr;
+  }
+  if (asset === Asset.SOL) {
+    // 44 chars base58-like
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
+    let addr = "";
+    for (let i = 0; i < 44; i++) {
+      const idx = Number.parseInt(hexStr[i % hexStr.length], 16) % chars.length;
+      addr += chars[idx];
+    }
+    return addr;
+  }
+  if (asset === Asset.ICP) {
+    return principal;
+  }
+  // ETH, BNB, USDT, TSLA → 0x + 40 hex
+  return `0x${hexStr.slice(0, 40)}`;
+}
+
 // ------- Receive Modal -------
 function ReceiveModal({
   open,
   onClose,
   defaultAsset,
+  principal,
 }: {
   open: boolean;
   onClose: () => void;
   defaultAsset?: Asset;
+  principal?: string;
 }) {
   const [asset, setAsset] = useState<Asset>(defaultAsset ?? Asset.BTC);
-  const [amount, setAmount] = useState("");
-  const [counterparty, setCounterparty] = useState("");
-  const [note, setNote] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncError, setSyncError] = useState("");
   const receiveAsset = useReceiveAsset();
 
   useEffect(() => {
-    if (open) setAsset(defaultAsset ?? Asset.BTC);
+    if (open) {
+      setAsset(defaultAsset ?? Asset.BTC);
+      setSyncSuccess(false);
+      setSyncError("");
+    }
   }, [open, defaultAsset]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!amount || !counterparty) return;
+  const walletAddress = principal
+    ? deriveWalletAddress(principal, asset)
+    : "Connect wallet to view address";
+  const tslaAddress = principal
+    ? deriveWalletAddress(principal, Asset.TSLA)
+    : "";
+
+  const copyAddress = useCallback(() => {
+    navigator.clipboard.writeText(walletAddress).then(() => {
+      setCopied(true);
+      toast.success("Address copied!");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [walletAddress]);
+
+  const syncTSLA = async () => {
+    if (!tslaAddress) return;
+    setSyncLoading(true);
+    setSyncError("");
+    setSyncSuccess(false);
     try {
-      await receiveAsset.mutateAsync({
-        asset,
-        amount: Number.parseFloat(amount),
-        counterparty,
-        note,
-      });
-      toast.success(`Received ${amount} ${asset} successfully`);
-      onClose();
-      setAmount("");
-      setCounterparty("");
-      setNote("");
-    } catch (e: any) {
-      toast.error(e.message || "Transaction failed");
+      const TSLA_CONTRACT = "0xC814A2F02436B9cCd1d1b13149aD7e1BD00DB1B4";
+      const res = await fetch(
+        `https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=${TSLA_CONTRACT}&address=${tslaAddress}&tag=latest`,
+      );
+      const json = await res.json();
+      if (json.status === "1" && json.result) {
+        const balance = Number(json.result) / 1e18;
+        if (balance > 0) {
+          await receiveAsset.mutateAsync({
+            asset: Asset.TSLA,
+            amount: balance,
+            counterparty: "Blockchain Sync",
+            note: "TSLA sync from Ethereum",
+          });
+          toast.success(`Synced ${balance.toFixed(4)} TSLA from Ethereum`);
+        } else {
+          toast.info("No TSLA balance found at this address");
+        }
+        setSyncSuccess(true);
+      } else {
+        setSyncError("Failed to fetch on-chain balance. Try again later.");
+      }
+    } catch {
+      setSyncError("Network error. Please check your connection.");
+    } finally {
+      setSyncLoading(false);
     }
   };
 
@@ -865,7 +975,7 @@ function ReceiveModal({
             Receive Assets
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+        <div className="space-y-4 mt-2">
           <div>
             <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
               Asset
@@ -886,247 +996,341 @@ function ReceiveModal({
               </SelectContent>
             </Select>
           </div>
+
           <div>
             <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Amount
+              Your {asset} Wallet Address
             </Label>
-            <Input
-              data-ocid="receive.amount.input"
-              type="number"
-              placeholder={`0.${"|0".repeat(ASSET_DECIMALS[asset])}`}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="bg-secondary border-border font-mono"
-              step="any"
-              min="0"
-              required
-            />
+            <div
+              className="flex items-center gap-2 rounded-lg p-3"
+              style={{
+                background: "oklch(0.13 0.008 260)",
+                border: "1px solid oklch(0.28 0.015 260)",
+              }}
+            >
+              <p
+                className="flex-1 text-xs font-mono break-all"
+                style={{ color: "oklch(0.80 0.008 90)" }}
+              >
+                {walletAddress}
+              </p>
+              <button
+                data-ocid="receive.copy.button"
+                type="button"
+                onClick={copyAddress}
+                className="flex-shrink-0 p-1.5 rounded-md transition-all"
+                style={{
+                  background: "oklch(0.22 0.015 260)",
+                  border: "1px solid oklch(0.32 0.015 260)",
+                }}
+              >
+                {copied ? (
+                  <Check
+                    className="w-3.5 h-3.5"
+                    style={{ color: "oklch(0.68 0.15 145)" }}
+                  />
+                ) : (
+                  <Copy
+                    className="w-3.5 h-3.5"
+                    style={{ color: "oklch(0.60 0.008 90)" }}
+                  />
+                )}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Send {asset} to this address to fund your wallet.
+            </p>
           </div>
-          <div>
-            <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Sender Address
-            </Label>
-            <Input
-              data-ocid="receive.counterparty.input"
-              placeholder="Wallet address or principal"
-              value={counterparty}
-              onChange={(e) => setCounterparty(e.target.value)}
-              className="bg-secondary border-border font-mono text-sm"
-              required
-            />
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Note (optional)
-            </Label>
-            <Input
-              data-ocid="receive.note.input"
-              placeholder="Add a memo..."
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="bg-secondary border-border"
-            />
-          </div>
-          <div className="flex gap-3 pt-2">
+
+          {asset === Asset.TSLA && (
+            <div
+              className="rounded-lg p-4 space-y-3"
+              style={{
+                background: "oklch(0.45 0.18 25 / 0.06)",
+                border: "1px solid oklch(0.55 0.18 25 / 0.2)",
+              }}
+            >
+              <p
+                className="text-xs font-semibold uppercase tracking-widest"
+                style={{ color: "oklch(0.72 0.14 25)" }}
+              >
+                TSLA Deposit Address
+              </p>
+              <p
+                className="text-xs font-mono break-all"
+                style={{ color: "oklch(0.75 0.008 90)" }}
+              >
+                {tslaAddress}
+              </p>
+              <p className="text-xs" style={{ color: "oklch(0.55 0.008 90)" }}>
+                Transfer TSLA tokens (ERC-20) to this Ethereum address, then
+                click Sync to reflect balance in your portfolio.
+              </p>
+              <Button
+                data-ocid="receive.tsla.sync_button"
+                type="button"
+                onClick={syncTSLA}
+                disabled={syncLoading || syncSuccess}
+                className="w-full h-9 text-xs font-medium"
+                style={{
+                  background: syncSuccess
+                    ? "oklch(0.55 0.16 145 / 0.2)"
+                    : "oklch(0.45 0.18 25 / 0.15)",
+                  border: syncSuccess
+                    ? "1px solid oklch(0.55 0.16 145 / 0.4)"
+                    : "1px solid oklch(0.55 0.18 25 / 0.35)",
+                  color: syncSuccess
+                    ? "oklch(0.68 0.15 145)"
+                    : "oklch(0.72 0.14 25)",
+                }}
+              >
+                {syncLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Syncing Balance...
+                  </>
+                ) : syncSuccess ? (
+                  <>
+                    <Check className="mr-2 h-3.5 w-3.5" />
+                    Balance Synced
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                    Sync TSLA Balance
+                  </>
+                )}
+              </Button>
+              {syncError && (
+                <p
+                  data-ocid="receive.tsla.error_state"
+                  className="text-xs"
+                  style={{ color: "oklch(0.65 0.15 30)" }}
+                >
+                  {syncError}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
             <Button
-              data-ocid="receive.cancel_button"
+              data-ocid="receive.close_button"
               type="button"
               variant="outline"
               className="flex-1"
               onClick={onClose}
             >
-              Cancel
-            </Button>
-            <Button
-              data-ocid="receive.submit_button"
-              type="submit"
-              className="flex-1"
-              disabled={receiveAsset.isPending}
-              style={{
-                background:
-                  "linear-gradient(135deg, oklch(0.58 0.15 145), oklch(0.52 0.14 145))",
-                color: "oklch(0.97 0.003 90)",
-                border: "none",
-              }}
-            >
-              {receiveAsset.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              {receiveAsset.isPending ? "Recording..." : "Record Receipt"}
+              Close
             </Button>
           </div>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ------- Add Demo Funds Modal -------
-function DemoFundsModal({
-  open,
-  onClose,
+// ------- Portfolio Breakdown -------
+function PortfolioBreakdown({
+  balances,
+  balancesLoading,
+  livePrices,
 }: {
-  open: boolean;
-  onClose: () => void;
+  balances: { asset: Asset; balance: number }[] | undefined;
+  balancesLoading: boolean;
+  livePrices?: Record<Asset, number>;
 }) {
-  const [asset, setAsset] = useState<Asset>(Asset.BTC);
-  const [amount, setAmount] = useState("");
-  const addMockBalance = useAddMockBalance();
-
-  const PRESETS: Record<Asset, number[]> = {
-    [Asset.BTC]: [0.01, 0.1, 0.5],
-    [Asset.ETH]: [0.1, 1, 5],
-    [Asset.BNB]: [0.5, 2, 10],
-    [Asset.SOL]: [1, 10, 50],
-    [Asset.ICP]: [10, 100, 1000],
-    [Asset.USDT]: [100, 1000, 10000],
-    [Asset.TSLA]: [10, 100, 500],
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!amount) return;
-    try {
-      await addMockBalance.mutateAsync({
-        asset,
-        amount: Number.parseFloat(amount),
-      });
-      toast.success(`Added ${amount} ${asset} to your vault`);
-      onClose();
-      setAmount("");
-    } catch (e: any) {
-      toast.error(e.message || "Failed to add funds");
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent
-        data-ocid="demo.dialog"
-        className="max-w-md"
+  if (balancesLoading) {
+    return (
+      <div
+        data-ocid="portfolio.breakdown.loading_state"
+        className="rounded-2xl p-6"
         style={{
-          background: "oklch(0.17 0.01 260)",
-          border: "1px solid oklch(0.76 0.12 78 / 0.2)",
-          boxShadow: "0 20px 60px oklch(0 0 0 / 0.7)",
+          background: "oklch(0.19 0.012 260 / 0.95)",
+          border: "1px solid oklch(0.30 0.015 260 / 0.6)",
         }}
       >
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl flex items-center gap-2">
-            <Plus
-              className="w-5 h-5"
-              style={{ color: "oklch(0.76 0.12 78)" }}
+        <Skeleton
+          className="h-4 w-40 mb-4"
+          style={{ background: "oklch(0.22 0.015 260)" }}
+        />
+        <Skeleton
+          className="h-6 w-full mb-3"
+          style={{ background: "oklch(0.22 0.015 260)" }}
+        />
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <Skeleton
+              key={i}
+              className="h-10 w-full"
+              style={{ background: "oklch(0.22 0.015 260)" }}
             />
-            Add Demo Funds
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-          <div>
-            <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Asset
-            </Label>
-            <Select
-              value={asset}
-              onValueChange={(v) => {
-                setAsset(v as Asset);
-                setAmount("");
-              }}
-            >
-              <SelectTrigger
-                data-ocid="demo.select"
-                className="bg-secondary border-border"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.values(Asset).map((a) => (
-                  <SelectItem key={a} value={a}>
-                    {ASSET_ICONS[a]} {a}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-          <div>
-            <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Quick amounts
-            </Label>
-            <div className="flex gap-2">
-              {PRESETS[asset].map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setAmount(String(p))}
-                  className="flex-1 py-2 text-xs font-mono rounded-md transition-all"
-                  style={{
-                    background:
-                      amount === String(p)
-                        ? "oklch(0.76 0.12 78 / 0.2)"
-                        : "oklch(0.22 0.015 260)",
-                    border:
-                      amount === String(p)
-                        ? "1px solid oklch(0.76 0.12 78 / 0.5)"
-                        : "1px solid oklch(0.28 0.015 260)",
-                    color:
-                      amount === String(p)
-                        ? "oklch(0.76 0.12 78)"
-                        : "oklch(0.70 0.008 90)",
-                  }}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </div>
+  if (!balances || balances.length === 0) {
+    return null;
+  }
 
-          <div>
-            <Label className="text-xs text-muted-foreground uppercase tracking-widest mb-2 block">
-              Custom Amount
-            </Label>
-            <Input
-              data-ocid="demo.input"
-              type="number"
-              placeholder="Enter amount..."
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="bg-secondary border-border font-mono"
-              step="any"
-              min="0"
-              required
-            />
-          </div>
+  const rows = balances.map((b) => ({
+    ...b,
+    usd: b.balance * (livePrices?.[b.asset] ?? USD_PRICES[b.asset]),
+    color: ASSET_COLORS[b.asset],
+  }));
 
-          <div className="flex gap-3 pt-2">
-            <Button
-              data-ocid="demo.cancel_button"
-              type="button"
-              variant="outline"
-              className="flex-1"
-              onClick={onClose}
-            >
-              Cancel
-            </Button>
-            <Button
-              data-ocid="demo.submit_button"
-              type="submit"
-              className="flex-1"
-              disabled={addMockBalance.isPending}
+  const total = rows.reduce((s, r) => s + r.usd, 0);
+  const tslaRow = rows.find((r) => r.asset === Asset.TSLA);
+  const tslaUsd = tslaRow?.usd ?? 0;
+  const tslaPercent = total > 0 ? (tslaUsd / total) * 100 : 0;
+  const otherPercent = 100 - tslaPercent;
+
+  const sorted = [...rows].sort((a, b) => b.usd - a.usd);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.15 }}
+      data-ocid="portfolio.breakdown.card"
+      className="rounded-2xl p-6"
+      style={{
+        background: "oklch(0.19 0.012 260 / 0.95)",
+        border: "1px solid oklch(0.30 0.015 260 / 0.6)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h3
+            className="font-display font-semibold text-base"
+            style={{ color: "oklch(0.90 0.01 260)" }}
+          >
+            Portfolio Breakdown
+          </h3>
+          <p
+            className="text-xs mt-0.5"
+            style={{ color: "oklch(0.50 0.01 260)" }}
+          >
+            TSLA vs. Other Assets
+          </p>
+        </div>
+        <div className="text-right">
+          <p
+            className="font-mono font-semibold text-sm"
+            style={{ color: "oklch(0.76 0.12 78)" }}
+          >
+            {tslaPercent.toFixed(1)}% TSLA
+          </p>
+          <p className="text-xs" style={{ color: "oklch(0.50 0.01 260)" }}>
+            {formatUSD(tslaUsd)} / {formatUSD(total)}
+          </p>
+        </div>
+      </div>
+
+      {/* Stacked bar */}
+      <div
+        className="w-full h-4 rounded-full overflow-hidden flex mb-5"
+        style={{ background: "oklch(0.24 0.012 260)" }}
+      >
+        {tslaPercent > 0 && (
+          <div
+            className="h-full rounded-l-full transition-all duration-700"
+            style={{
+              width: `${tslaPercent}%`,
+              background: "oklch(0.76 0.12 78)",
+            }}
+          />
+        )}
+        {otherPercent > 0 && (
+          <div
+            className="h-full rounded-r-full"
+            style={{
+              width: `${otherPercent}%`,
+              background: "oklch(0.32 0.02 260)",
+            }}
+          />
+        )}
+      </div>
+
+      {/* Rows */}
+      <div className="space-y-2">
+        {sorted.map((row) => {
+          const pct = total > 0 ? (row.usd / total) * 100 : 0;
+          const isTsla = row.asset === Asset.TSLA;
+          return (
+            <div
+              key={row.asset}
+              data-ocid={isTsla ? "portfolio.breakdown.tsla_row" : undefined}
+              className="rounded-lg px-3 py-2.5"
               style={{
-                background:
-                  "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
-                color: "oklch(0.12 0.01 260)",
-                border: "none",
+                background: isTsla
+                  ? "oklch(0.76 0.12 78 / 0.07)"
+                  : "oklch(0.22 0.012 260 / 0.5)",
+                border: isTsla
+                  ? "1px solid oklch(0.76 0.12 78 / 0.15)"
+                  : "1px solid transparent",
               }}
             >
-              {addMockBalance.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              {addMockBalance.isPending ? "Adding..." : "Add Funds"}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    style={{ background: row.color }}
+                  />
+                  <span
+                    className="text-xs font-semibold font-mono tracking-wide"
+                    style={{
+                      color: isTsla
+                        ? "oklch(0.76 0.12 78)"
+                        : "oklch(0.75 0.01 260)",
+                    }}
+                  >
+                    {row.asset}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className="text-xs font-mono"
+                    style={{ color: "oklch(0.55 0.01 260)" }}
+                  >
+                    {row.balance.toLocaleString("en-US", {
+                      maximumFractionDigits: 4,
+                    })}
+                  </span>
+                  <span
+                    className="text-xs font-mono font-medium"
+                    style={{
+                      color: isTsla
+                        ? "oklch(0.76 0.12 78)"
+                        : "oklch(0.82 0.01 260)",
+                    }}
+                  >
+                    {formatUSD(row.usd)}
+                  </span>
+                  <span
+                    className="text-xs w-10 text-right"
+                    style={{ color: "oklch(0.50 0.01 260)" }}
+                  >
+                    {pct.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+              <div
+                className="w-full h-1 rounded-full"
+                style={{ background: "oklch(0.27 0.012 260)" }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{ width: `${pct}%`, background: row.color }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
   );
 }
 
@@ -1145,7 +1349,6 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
   const [receiveDefaultAsset, setReceiveDefaultAsset] = useState<Asset>(
     Asset.BTC,
   );
-  const [demoOpen, setDemoOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
@@ -1155,10 +1358,20 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
     }
   }, [actor, actorLoading, initialized, initWallet]);
 
+  const { prices: livePrices } = useLivePrices();
+
   const totalUSD =
-    balances?.reduce((sum, b) => sum + b.balance * USD_PRICES[b.asset], 0) ?? 0;
+    balances?.reduce(
+      (sum, b) =>
+        sum + b.balance * (livePrices[b.asset] ?? USD_PRICES[b.asset]),
+      0,
+    ) ?? 0;
 
   const principal = identity?.getPrincipal().toString() ?? "";
+  const ethAddress = principal ? deriveWalletAddress(principal, Asset.ETH) : "";
+  const shortEthAddress = ethAddress
+    ? `${ethAddress.slice(0, 8)}...${ethAddress.slice(-6)}`
+    : "";
   const shortPrincipal = principal
     ? `${principal.slice(0, 5)}...${principal.slice(-4)}`
     : "";
@@ -1286,6 +1499,52 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
           </div>
         </motion.div>
 
+        {/* Wallet Address Strip */}
+        {principal && (
+          <div
+            className="flex items-center justify-between px-4 py-2.5 rounded-xl"
+            style={{
+              background: "oklch(0.17 0.01 260)",
+              border: "1px solid oklch(0.26 0.015 260)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Wallet
+                className="w-3.5 h-3.5"
+                style={{ color: "oklch(0.50 0.01 260)" }}
+              />
+              <span className="text-xs text-muted-foreground">Your Wallet</span>
+              <span
+                className="w-px h-3"
+                style={{ background: "oklch(0.30 0.015 260)" }}
+              />
+              <span
+                className="text-xs font-mono"
+                style={{ color: "oklch(0.65 0.008 90)" }}
+              >
+                {shortEthAddress}
+              </span>
+            </div>
+            <button
+              data-ocid="wallet.copy_address_button"
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(ethAddress);
+                toast.success("Wallet address copied!");
+              }}
+              className="p-1 rounded transition-opacity hover:opacity-80"
+            >
+              <Copy className="w-3 h-3 text-muted-foreground" />
+            </button>
+          </div>
+        )}
+
+        <PortfolioBreakdown
+          balances={balances}
+          balancesLoading={balancesLoading || actorLoading}
+          livePrices={livePrices}
+        />
+
         {/* TSLA Price Chart */}
         <TSLAPriceChart
           onSend={() => {
@@ -1298,7 +1557,7 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
           }}
         />
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {[
             {
               label: "Send",
@@ -1320,18 +1579,6 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
                 background: "oklch(0.19 0.012 260)",
                 border: "1px solid oklch(0.58 0.15 145 / 0.25)",
                 color: "oklch(0.68 0.15 145)",
-              },
-            },
-            {
-              label: "Add Funds",
-              icon: Plus,
-              ocid: "wallet.demo_button",
-              onClick: () => setDemoOpen(true),
-              style: {
-                background:
-                  "linear-gradient(135deg, oklch(0.76 0.12 78), oklch(0.68 0.14 68))",
-                border: "none",
-                color: "oklch(0.12 0.01 260)",
               },
             },
           ].map(({ label, icon: Icon, ocid, onClick, style }) => (
@@ -1377,6 +1624,7 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
                   asset={b.asset}
                   balance={b.balance}
                   index={i}
+                  livePrice={livePrices[b.asset]}
                 />
               ))}
             </div>
@@ -1481,8 +1729,8 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
         open={receiveOpen}
         onClose={() => setReceiveOpen(false)}
         defaultAsset={receiveDefaultAsset}
+        principal={principal}
       />
-      <DemoFundsModal open={demoOpen} onClose={() => setDemoOpen(false)} />
 
       <Toaster
         theme="dark"
