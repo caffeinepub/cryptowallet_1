@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Menu, Shield, Wallet, X } from "lucide-react";
+import { Menu, Phone, Shield, Wallet, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
@@ -8,7 +8,8 @@ export type AppPage =
   | "about-tsla"
   | "investments"
   | "dashboard"
-  | "admin";
+  | "admin"
+  | "contact";
 
 interface NavBarProps {
   page: AppPage;
@@ -24,6 +25,7 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
     { label: "About TSLA Coin", page: "about-tsla", ocid: "nav.about_link" },
     { label: "Invest", page: "investments", ocid: "nav.investments_link" },
     { label: "Dashboard", page: "dashboard", ocid: "nav.dashboard_link" },
+    { label: "Contact", page: "contact", ocid: "nav.contact_link" },
     ...(isLoggedIn
       ? [{ label: "Admin", page: "admin" as AppPage, ocid: "nav.admin_link" }]
       : []),
@@ -103,6 +105,9 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
               {link.page === "admin" && (
                 <Shield className="w-3.5 h-3.5 relative" />
               )}
+              {link.page === "contact" && (
+                <Phone className="w-3.5 h-3.5 relative" />
+              )}
               <span className="relative">{link.label}</span>
               {link.page === "dashboard" && isLoggedIn && (
                 <span
@@ -181,6 +186,7 @@ export default function NavBar({ page, setPage, isLoggedIn }: NavBarProps) {
                   }}
                 >
                   {link.page === "admin" && <Shield className="w-4 h-4" />}
+                  {link.page === "contact" && <Phone className="w-4 h-4" />}
                   {link.label}
                 </button>
               ))}

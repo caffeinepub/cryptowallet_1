@@ -62,6 +62,7 @@ import {
 import AboutTSLACoin from "./pages/AboutTSLACoin";
 import ActiveInvestmentsPage from "./pages/ActiveInvestmentsPage";
 import AdminPage from "./pages/AdminPage";
+import ContactPage from "./pages/ContactPage";
 import HomePage from "./pages/HomePage";
 import InvestmentConfirmPage from "./pages/InvestmentConfirmPage";
 import InvestmentDetailPage from "./pages/InvestmentDetailPage";
@@ -2179,6 +2180,17 @@ export default function App() {
             transition={{ duration: 0.3 }}
           >
             <HomePage setPage={setPage} />
+          </motion.div>
+        )}
+        {page === "contact" && (
+          <motion.div
+            key="contact"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3 }}
+          >
+            <ContactPage />
           </motion.div>
         )}
         {page === "about-tsla" && (
