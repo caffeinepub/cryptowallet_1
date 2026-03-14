@@ -527,11 +527,15 @@ function AssetCard({
   balance,
   index,
   livePrice,
+  onSend,
+  onReceive,
 }: {
   asset: Asset;
   balance: number;
   index: number;
   livePrice?: number;
+  onSend?: () => void;
+  onReceive?: () => void;
 }) {
   const usdValue = balance * (livePrice ?? USD_PRICES[asset]);
   const color = ASSET_COLORS[asset];
@@ -590,6 +594,38 @@ function AssetCard({
           >
             {formatUSD(livePrice)} / coin
           </span>
+        </div>
+      )}
+      {(onSend || onReceive) && (
+        <div className="flex gap-1.5 mt-3">
+          {onSend && (
+            <button
+              type="button"
+              onClick={onSend}
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-80"
+              style={{
+                background: `${color}18`,
+                border: `1px solid ${color}35`,
+                color,
+              }}
+            >
+              <Send className="w-3 h-3" /> Send
+            </button>
+          )}
+          {onReceive && (
+            <button
+              type="button"
+              onClick={onReceive}
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-80"
+              style={{
+                background: "oklch(0.68 0.15 145 / 0.12)",
+                border: "1px solid oklch(0.68 0.15 145 / 0.3)",
+                color: "oklch(0.68 0.15 145)",
+              }}
+            >
+              <Download className="w-3 h-3" /> Receive
+            </button>
+          )}
         </div>
       )}
     </motion.div>
@@ -1627,6 +1663,14 @@ function Dashboard({ setPage }: { setPage: (p: AppPage) => void }) {
                   balance={b.balance}
                   index={i}
                   livePrice={livePrices[b.asset]}
+                  onSend={() => {
+                    setSendDefaultAsset(b.asset);
+                    setSendOpen(true);
+                  }}
+                  onReceive={() => {
+                    setReceiveDefaultAsset(b.asset);
+                    setReceiveOpen(true);
+                  }}
                 />
               ))}
             </div>
